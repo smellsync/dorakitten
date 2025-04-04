@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dorakitten Buzz Wire Game</title>
+  <style>
+    body {
+      background: #f0f0f0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      padding: 20px;
+    }
+    #left-panel {
+      flex: 1;
+      text-align: center;
+    }
+    #right-panel {
+      width: 200px;
+      padding-left: 20px;
+    }
+    canvas {
+      background: white;
+      border: 2px solid #333;
+      display: block;
+      margin: 20px auto;
+    }
+    #message {
+      font-size: 20px;
+      font-weight: bold;
+      color: #333;
+      margin: 10px 0;
+    }
+    #nameInput {
+      padding: 8px;
+      font-size: 16px;
+    }
+    #startBtn {
+      padding: 8px 16px;
+      font-size: 16px;
+      margin-left: 8px;
+      cursor: pointer;
+    }
+    #leaderboard {
+      background: #fff;
+      padding: 10px;
+      border: 2px solid #333;
+      border-radius: 8px;
+    }
+    #leaderboard h3 {
+      margin-top: 0;
+      font-size: 18px;
+      text-align: center;
+    }
+    .player-entry {
+      font-size: 14px;
+      margin: 4px 0;
+    }
+  </style>
+</head>
+<body>
+
+<div id="left-panel">
+  <h1>Dorakitten Buzz Wire Game</h1>
+  <div>
+    <input id="nameInput" type="text" placeholder="Enter your name" />
+    <button id="startBtn">Start Game</button>
+  </div>
+  <p id="message">Enter your name to begin!</p>
+  <canvas id="gameCanvas" width="800" height="500"></canvas>
+</div>
+
+<div id="right-panel">
+  <div id="leaderboard">
+    <h3>Top Players</h3>
+    <div id="leaderboardList"></div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const message = document.getElementById('message');
+  const nameInput = document.getElementById('nameInput');
+  const startBtn = document.getElementById('startBtn');
+  const leaderboardList = document.getElementById('leaderboardList');
+
+  const SHEET_API = "https://sheetdb.io/api/v1/5z3q61c07mkp6";
+  const cursorRadius = 10;
+  let playerName = "";
+  let gameStarted = false;
+  let gameOver = true;
+  let currentLevel = 0;
+  let hasEnteredStart = false;
+
+  // Generate 10 dummy levels with varying path shapes
+  const levels = Array.from({ length: 10 }, (_, i) => ({
+    start: { x: 80, y: 80, radius: 15 },
+    end: { x: 700, y: 420, radius: 20 },
+    path: [
+      { x: 80, y: 80, width: 20, height: 300 - i * 10 },
+      { x: 80, y: 80, width: 500 - i * 20, height: 20 },
+      { x: 560 - i * 10, y: 80, width: 20, height: 300 - i * 5 },
+      { x: 300, y: 360 - i * 5, width: 280, height: 20 },
+      { x: 300, y: 360, width: 20, height: 100 },
+      { x: 300, y: 440, width: 400, height: 20 }
+    ]
+  }));
+
+  function drawLevel(level) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#3333aa';
+    level.path.forEach(rect => {
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    });
+
+    ctx.beginPath();
+    ctx.fillStyle = 'green';
+    ctx.arc(level.start.x, level.start.y, level.start.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.fillStyle = 'gold';
+    ctx.arc(level.end.x, level.end.y, level.end.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function isInCircle(x, y, circle) {
+    const dx = x - circle.x;
+    const dy = y - circle.y;
+    return Math.sqrt(dx * dx + dy * dy) <= circle.radius;
+  }
+
+  function circleIntersectsRect(cx, cy, radius, rect) {
+    const nearestX = Math.max(rect.x, Math.min(cx, rect.x + rect.width));
+    const nearestY = Math.max(rect.y, Math.min(cy, rect.y + rect.height));
+    const dx = cx - nearestX;
+    const dy = cy - nearestY;
+    return (dx * dx + dy * dy) <= (radius * radius);
+  }
+
+  function sendScoreToSheet(name, levelReached) {
+    fetch(SHEET_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        data: [{ name: name, level: levelReached }]
+      })
+    }).then(() => fetchLeaderboard());
+  }
+
+  function fetchLeaderboard() {
+    fetch(SHEET_API)
+      .then(res => res.json())
+      .then(data => {
+        const sorted = data
+          .map(d => ({ name: d.name, level: parseInt(d.level) || 0 }))
+          .sort((a, b) => b.level - a.level)
+          .slice(0, 10);
+
+        leaderboardList.innerHTML = sorted.map(p =>
+          `<div class="player-entry">${p.name}: Level ${p.level}</div>`
+        ).join('');
+      });
+  }
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (gameOver) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const level = levels[currentLevel];
+
+    drawLevel(level);
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 2;
+    ctx.arc(x, y, cursorRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (!hasEnteredStart && isInCircle(x, y, level.start)) {
+      hasEnteredStart = true;
+      gameStarted = true;
+      message.textContent = "Carefully trace the wire!";
+    }
+
+    if (!hasEnteredStart) return;
+
+    const touchingWire = level.path.some(r => circleIntersectsRect(x, y, cursorRadius, r));
+    if (!touchingWire) {
+      message.textContent = "💥 BUZZ! You touched the edge!";
+      gameOver = true;
+      sendScoreToSheet(playerName, currentLevel);
+      return;
+    }
+
+    if (isInCircle(x, y, level.end)) {
+      gameOver = true;
+      currentLevel++;
+
+      setTimeout(() => {
+        if (currentLevel >= levels.length) {
+          message.textContent = "🏆 You completed all levels!";
+          sendScoreToSheet(playerName, currentLevel);
+        } else {
+          gameStarted = false;
+          gameOver = false;
+          hasEnteredStart = false;
+          message.textContent = "Next Level: Move to the green circle!";
+          drawLevel(levels[currentLevel]);
+        }
+      }, 800);
+    }
+  });
+
+  startBtn.addEventListener('click', () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      alert("Please enter your name first.");
+      return;
+    }
+    playerName = name;
+    currentLevel = 0;
+    gameStarted = false;
+    gameOver = false;
+    hasEnteredStart = false;
+    message.textContent = "Move your mouse to the green circle to begin!";
+    drawLevel(levels[currentLevel]);
+  });
+
+  // Init
+  ctx.fillStyle = '#ccc';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  fetchLeaderboard();
+</script>
+
+</body>
+</html>
